@@ -1,0 +1,155 @@
+---
+title: "jamboree 2 code"
+author: "David Zemmour"
+output: html_document
+date: "2023-07-27"
+editor_options: 
+  chunk_output_type: inline
+---
+
+**Initialize: load libraries and custom functions**
+
+```{r}
+setwd("~/google_drive/ImmgenT/jamboree2/immgent_jamboree2_git/")
+
+libs = c("Seurat", "ggplot2", "viridis", "pheatmap", "reshape2", "dplyr") 
+sapply(libs, function(x) suppressMessages(suppressWarnings(library(x, character.only = TRUE, quietly = T, warn.conflicts  = F))))
+
+#options(Seurat.object.assay.version = 'v5') #if using V5
+
+#mypal = c('lightgrey','blue','green','orange','red','yellow','lightsalmon','orchid4','pink3','gold4', 'yellowgreen','cyan4','brown','thistle3','tomato3','orange2','mediumpurple1')
+
+#Large color palette:
+library("pals")
+library("RColorBrewer")
+n = 70
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+mypal1 = unique(unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals))))
+mypal1 = mypal1[-4]
+parade = function(n) { return(Seurat::DiscretePalette(n, palette = "parade", shuffle = F)) }
+length(glasbey())
+length(polychrome())
+mypal = c(glasbey(), polychrome(), mypal1)
+names(mypal) = NULL
+
+```
+
+**Transfer metadata from your previous object to the integrated**
+```{r}
+# Load in your original small dataset
+orig_sc =  readRDS('dataset_clean.Rds') #~/google_drive/ImmgenT/exp_id/20220912_exp_id_16_CBDM_scurfy/IGT24/dataset_clean.Rds
+orig_sc$orig_RNA_clusters = orig_sc$RNA_clusters
+
+# Load in the Integrated dataset
+integrated_sc = readRDS('IGT24_withsketch_SeuratV4.Rds')
+orig_sc$RNA_clusters = as.character(orig_sc$RNA_clusters)
+
+integrated_sc$orig_RNA_clusters = NA
+all(colnames(integrated_sc)[match(colnames(orig_sc), colnames(integrated_sc))] == colnames(orig_sc))
+integrated_sc$orig_RNA_clusters[match(colnames(orig_sc), colnames(integrated_sc))] = orig_sc$RNA_clusters
+
+DimPlot(integrated_sc, reduction = "umap_totalvi", group.by = "orig_RNA_clusters", order = TRUE, cols = mypal, label = T, label.box = F)
+
+DimPlot(integrated_sc, reduction = "umap_totalvi", group.by = "ClusterTOTALVI_Res1", order = TRUE, cols = mypal, label = T, label.box = F)
+
+```
+
+**Compare my clusters to the integrated clusters**
+```{r}
+integrated_sc$ClusterTOTALVI_Res1 = factor(integrated_sc$ClusterTOTALVI_Res1, levels = as.character(c(0:(length(unique(integrated_sc$ClusterTOTALVI_Res1))-1)))) 
+integrated_sc$orig_RNA_clusters = factor(integrated_sc$orig_RNA_clusters, levels = as.character(c(1:(length(unique(integrated_sc$orig_RNA_clusters))-1)))) 
+
+#Subset your object to keep only your data
+so = integrated_sc[,integrated_sc$IGT == "IGT24"]
+
+so$ClusterTOTALVI_Res1 = factor(so$ClusterTOTALVI_Res1, levels = as.character(c(0:(length(unique(so$ClusterTOTALVI_Res1))-1)))) 
+so$orig_RNA_clusters = factor(so$orig_RNA_clusters, levels = as.character(c(1:(length(unique(so$orig_RNA_clusters))-1)))) 
+
+
+tmp = table(so$orig_RNA_clusters, so$ClusterTOTALVI_Res1)
+tmp3 = tmp / rowSums(tmp)
+rowSums(tmp3)
+
+ColorRamp = rev(viridis(100))
+tmp3[tmp3==0] = NA
+labels_matrix = ifelse(is.na(tmp3), yes = "", no = as.character(signif(tmp3,2)*100))
+#labels_matrix = matrix(labels_matrix, nrow(data_matrix), ncol(data_matrix))
+pheatmap(mat = signif(tmp3,2)*100, cluster_rows = F, cluster_cols = F, display_numbers = labels_matrix, number_format = "%.0f", breaks = seq(0,100,length.out = length(ColorRamp)+1), col = ColorRamp, fontsize_row = 10, fontsize_col = 10, fontsize = 15, main = "Percent of cells of my original cluster (rows) in the integrated clusters (cols)", na_col = "#FDE725")
+
+```
+
+**Distribution of the integrated clusters in each sample**
+```{r}
+#Subset your object to keep only your data
+so = integrated_sc[,integrated_sc$IGT == "IGT24"]
+
+df = data.frame(cluster = factor(sprintf("cl%s",so@meta.data[,"ClusterTOTALVI_Res1"]), levels = sprintf("cl%s",as.character(c(0:(length(unique(so@meta.data[,"ClusterTOTALVI_Res1"]))-1))))), 
+                sample = factor(so$sample_name.1, levels = unique(so$sample_name.1)) )
+tmp = table(df$cluster, df$sample)
+tmp2 = t(t(tmp) / colSums(tmp)) # normalize the number of cells per sample
+colSums(tmp2)
+tmp3 = tmp2
+rowSums(tmp3)
+tmp4 = melt(tmp3)
+head(tmp4)
+tmp4$sample = df$sample[match(tmp4$Var2, df$sample)]
+
+#pdf(file = sprintf("%s_SampleComposition_%s.pdf", prefix, res), width =30, height =20)
+ColorRamp = rev(viridis(100))
+tmp3[tmp3==0] = NA
+labels_matrix = ifelse(is.na(tmp3), yes = "", no = as.character(signif(tmp3,2)*100))
+#labels_matrix = matrix(labels_matrix, nrow(data_matrix), ncol(data_matrix))
+pheatmap(mat = signif(tmp3,2)*100, cluster_rows = F, cluster_cols = F, display_numbers = labels_matrix, number_format = "%.0f", breaks = seq(0,100,length.out = length(ColorRamp)+1), col = ColorRamp, fontsize_row = 10, fontsize_col = 10, fontsize = 15, main = "Percent of cells in each sample", na_col = "#FDE725")
+
+ggplot(tmp4) + geom_point(aes(Var1, value, color = sample), size = I(3), alpha = 0.7) + scale_color_manual(values = mypal) + theme_bw()+ ggtitle(label = "Cluster composition in each Sample") + theme(axis.text.x  = element_text(angle=75, vjust=0.5, size=10)) + facet_wrap(~sample) + NoLegend()
+
+#dev.off()
+
+```
+
+**Plot genes and proteins**
+
+```{r}
+#normalize the ADT and RNA data before plotting
+so = NormalizeData(so,assay = "ADT", normalization.method = "CLR", verbose = T) 
+so = NormalizeData(so,assay = "RNA", normalization.method = "LogNormalize", verbose = T)
+
+
+NormalizeData(integrated_sc,assay = "ADT", normalization.method = "CLR", verbose = T) 
+DefaultAssay(integrated_sc) = "ADT"
+
+FeaturePlot(integrated_sc, features = "CD62L", raster = T, slot = "data")
+FeaturePlot(integrated_sc, features = "TCRGD", raster = T, slot = "data")
+
+```
+
+
+**Gene expression differences**
+
+```{r}
+library("EnhancedVolcano")
+Idents(so) = so$IGT
+
+markers = FindMarkers(so, ident.1 = "10", ident.2 = "25", group.by = "ClusterTOTALVI_Res1", subset.ident = "IGT24")
+EnhancedVolcano(markers, lab = rownames(markers), x = 'avg_log2FC', y = 'p_val', subtitle = "", title = "10 vs 25 in IGT24")
+
+markers = FindMarkers(so, ident.1 = "10", ident.2 = "0", group.by = "ClusterTOTALVI_Res1", subset.ident = "IGT24")
+EnhancedVolcano(markers, lab = rownames(markers), x = 'avg_log2FC', y = 'p_val', subtitle = "", title = "10 vs 0 in IGT24")
+
+integrated_sc$clustertest = "others"
+integrated_sc$clustertest[integrated_sc$ClusterTOTALVI_Res1 %in% c("40", "46", "26", "24", "19")] = "BottomRight"
+Idents(integrated_sc) = integrated_sc$clustertest
+DefaultAssay(integrated_sc) = "RNA"
+tmp = integrated_sc[,integrated_sc$IGT != "IGT24"]
+markers = FindMarkers(tmp, ident.1 = "BottomRight", group.by = "clustertest")
+EnhancedVolcano(markers, lab = rownames(markers), x = 'avg_log2FC', y = 'p_val', subtitle = "", title = "BottomRight")
+tmp = NormalizeData(tmp,assay = "RNA", normalization.method = "LogNormalize", verbose = T)
+FeaturePlot(tmp, features = "Tox", raster = T)
+FeaturePlot(tmp, features = "Dock2", raster = T)
+
+
+
+
+```
+
+
